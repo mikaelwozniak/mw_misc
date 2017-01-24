@@ -1,0 +1,132 @@
+FORMAT: 1A
+
+# new APPOINTMENT micro-service
+
+Here is a first draft for the new appointment microservice.
+It exposes endpoints to view and manage the following resources
+- appointment slot (a time range that may be used for an appointment) 
+- appointment (an actual appointment that has been booked and may or may not have happened)
+- priority questions
+
+Other resources handled as well are, typically side loaded:
+- fault
+- priority answers 
+
+The general flow is 
+1. GET /services-accounts 
+2. GET /services-product-holdings
+3. ... some optional operation (to obtian priority answers, etc)
+4. GET /appointment-slots 
+5. POST /appointment
+
+
+## some background information 
+
+Internally, we have multiple types of appointment, ultimately served by a different third party. 
+- smart meter appointment handled by SAP (smart)
+- services appointment handled by WMIS (services) (
+   * Annual service visit (services.asv), 
+   * First visit (services.sv), 
+   * Interim Breakdown (services.ib)
+   * combinations (services.ASV-AND-IB, services.FV-AND-IB)
+- central heating installations appointment handled by Sales Force (chi)
+- dyno (plumbing and draining) appointment handled by the Dyno company (dyno)
+
+Some of those have one or two extra properties but they share their core concepts, properties and actions: an appointment is for someone with a service account, it is linked to a slot with a timerange, it may be linked to one or more faults, etc. 
+
+Therefore, the idea is to have the same resources and end points represent all those appointments. Allowing an hypothetical web 'user's appointments' page to retrieve and display them all in a standardised fashion. 
+
+## to be discussed 
+
+the following attributes have issues 
+- slot.variant seems to be a mess, many different interpretation depending on types, the value 4 for exmple doesn't always mean the same thing! Can we remove it?
+- is modifiable on dynoappointment the same as reshedulable on appointment?
+- where are the faults obtained, are they only used for appointments? We could have that in the micro service as well then? Or they belong to a product micro-service?
+- appointment.status, different enum for dyno and other types of appointment 
+
+main status enum: booked, engineer-preparing, engineer-on-the-way, completed, not-available.
+
+dyno status enum:open, assigned, accepted, resolved, work-completed, cancelled, on-hold, acknowledged, resolved-non-billable, awaiting-invoice, in-progress-on-site, in-progress-off-site, closed, in-progress, declined, declined-with-follow-on, awaiting-dispatch.
+
+
+### Appointment
+Appointment as a resource represents following information
+
+| Property | Type | As request | As response | Description |
+| :-------------------- | :---------- | :-------------------- | :-------------------- | ------------------------------------------------------------ |
+| id | String | | | |
+| servicesAccount | String | | |
+| status | String | | | |
+| jobType | String | | | |
+| trackable | boolean | | | |
+| reschedulable | boolean | | | |
+| cancellable | boolean | | | |
+| combinable | boolean | | | |
+| telephoneNumber | TelephoneNumber | | | |
+| appointmentSlot | String | | | include/sideload to see all the time information, future/past? |
+| priority | boolean | | | |
+| faults | Array of String | | | now an array |
+| problemDescription | String | | | new |
+| detailsForEngineer | String | | | new |
+| priorityAnswer | String | | | new |
+| referenceNumber | String | | | new |
+
+#### TelephoneNumber
+
+| Name | Type | As request | As response | Description |
+| :---------- | :------ | -------- |---------|------------------------------------ |
+| number | string | `Mandatory`| `Returned always` | Valid Telephone number applicable. |
+| type | string | `Optional` | `Returned always` |Telephone number type, it can be `home`, `work`, `mobile`|
+
+`Note`: When the jobType in the request been sent as 'chi', prospect in the meta needs to be populated with the value that has been sent as part of prospect resource response in the id tag also appointmentPayload is the meta tag value returned in the appointment-slots resource's response.
+
+`Note`: When the error code returned from the sales force system while confirming the CHI appointment details is either of 1,2,3 and 9 values error code 500 will be returned from the endpoint.
+
+`Note`: Appointments can be queried either with list of account numbers or list of services product holdings. But we are not allowed to query with both account numbers and services product holdings.
+
+`Note`: `meta` and `appointmentPayload` in `meta` is mandatory while creating or rescheduling an appointment(i.e. appointment date/time). But `appointmentPayload` in `meta` is not mandatory when telephoneNumber is to be updated while rescheduling the appointment.
+
+### Appointment Slot
+Appointment Slot as a resource will be represented as below:
+
+| Name | Type | As request | As response | Description |
+| :------------| :---------- | :------------| :---------- | ------------------------------------------------------------ |
+| id | string | `Not Applicable` | `Returned always` | Unique Id to represent the appointment slot with pattern of start time and end time or Encrypted unique id that is returned from backend for each slot. |
+| variant | String | `Not Applicable` | `Returned always` | deprecated, can we remove it? |
+| classification | String | `Not Applicable` | `Returned always` | It will represent the time classification of slots. |
+| startTime | String | `Not Applicable` | `Returned always` | Start time of the appointment slot.  |
+| endTime | String | `Not Applicable` | `Returned always` | End time of the appointment slot. |
+| available | boolean | `Not Applicable` | `Returned always` | Status of the appointment slot. |
+
+### Priority Question 
+Priority question as an entity represents the following attributes:
+
+| Property | Type | As request | As response |Description |
+| :-------------------- | :---------- | :----------  | :---------- | ------------------------------------------------------------ |
+| id | String | `Not applicable` | `Returned always` | Unique id - encoded value formed by combining faultId or answerId and static text. |
+| description | String | `Not applicable` | `Returned always` | Description of the question. |
+| priorityAnswers | Array of String | `Not applicable` | `Returned always` | List of priority answers ids associated to a question. |
+
+### Priority Answer
+Priority answer as an entity represents the following attributes:
+
+| Property | Type | As request | As response | Description |
+| :-------------------- | :---------- | :----------  | :---------- | ------------------------------------------------------------ |
+| id | String | `Not applicable` | `Returned always` | Unique id - encoded value formed by combining answerId(returned from DYNO), serviceArea and workType. |
+| description | String | `Not applicable` | `Returned always` | Description of the answer. |
+| workType | String | `Not applicable` | `Not returned always` | This indicates the type of work it would be required to address the faults choosen. |
+| serviceArea | String | `Not applicable` | `Not returned always` | This indicates the nature of the service to be provided. |
+| priorityQuestion | String | `Not applicable` | `Not returned always` | Question id to get the current question level. |
+| nextPriorityQuestion | String | `Not applicable` | `Not returned always` | Question id to get the next level of questions. |
+
+> `Note` : This endpoint returns only one level of questions as per current implementation. In future following enhancement would be done
+   * `questionLevel` attribute to fetch the required levels of questions and answers for a given fault.
+   * `hasContract` attribute to differentiate existing/new services contracts.
+
+
+## Use cases
+To understand the flow of different types of appointments, please [click here](https://github.com/ConnectedHomes/online-api/blob/development/supplementary-docs/appointments/use-cases.md)
+
+## calls
+
+same as existing including properties change listed above
